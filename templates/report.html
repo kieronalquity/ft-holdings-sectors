@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Holdings &amp; Sectors Comparison</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/css/bootstrap.min.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.4.1/js/bootstrap.min.js"></script>
+    <style>
+        body { background-color: #f5f5f5; padding: 20px; }
+        .fund-header { background-color: #535050; width: 100%; padding: 10px; color: white; }
+        .holdings-header { background-color: LightGray; }
+        .sectors-table { border: 1px solid #f5eef8; background-color: #f5eef8; }
+        .sectors-header { background-color: #d7bde2; }
+        .data-date { text-align: right; color: blue; }
+        .icon-new { color: green; font-size: 15px; }
+        .icon-removed { color: red; font-size: 13px; }
+        .icon-returning { color: #666; font-size: 15px; }
+        .generated { color: #999; font-size: 11px; padding: 10px; }
+    </style>
+</head>
+<body>
+<div class="container-fluid">
+    <input class="form-control" id="myInput" type="text" placeholder="Search.."> <br>
+    <ul class="list-group" id="myList">
+    {% for fund in funds %}
+    <li class="list-group-item" style="padding:15px;margin:10px;width:{{ outer_width }}px;">
+        <div class="fund-header"><b>{{ fund.fund_name }}</b></div>
+        <table style="font-family:arial,sans-serif;font-size:10pt;border-collapse:collapse;width:{{ inner_width }}px;" cellpadding="5" cellspacing="5">
+
+            <!-- HOLDINGS ROW -->
+            <tr style="text-align:left;">
+            {% for date_key in dates %}
+            <td style="border:1px solid white;vertical-align:top;">
+                {% if loop.first %}<b style="margin-top:3%;margin-bottom:3%;">Holdings</b>
+                {% else %}<br>
+                {% endif %}
+                <table style="border:1px solid gray;font-family:arial,sans-serif;font-size:9pt;border-collapse:collapse;width:330px;" cellpadding="1" cellspacing="2">
+                    <tr class="holdings-header" style="border-bottom:1px solid #ddd;text-align:left;">
+                        <td colspan="4"><b>{{ fund.holdings[date_key].date_label }}</b></td>
+                    </tr>
+                    {% if fund.holdings[date_key].entries %}
+                    <tr style="text-align:left;">
+                        <td colspan="4" class="data-date"><small><i>Updated on : {{ fund.holdings[date_key].data_date }}</i></small></td>
+                    </tr>
+                    {% endif %}
+                    {% for entry in fund.holdings[date_key].entries %}
+                    {% if not entry.diff_icon == 'removed' or entry.percentage is not none %}
+                    <tr style="border-bottom:1px solid #ddd;text-align:left;">
+                        <td style="width:20px;">
+                            {% if entry.diff_icon == 'new' %}
+                            <span class="icon-new">&#x2197;</span>
+                            {% elif entry.diff_icon == 'removed' %}
+                            <span class="icon-removed">&#x2198;</span>
+                            {% elif entry.diff_icon == 'returning' %}
+                            <span class="icon-returning">&#x21C5;</span>
+                            {% else %}
+                            &nbsp;
+                            {% endif %}
+                        </td>
+                        <td>{{ entry.name }}</td>
+                        <td>{% if entry.percentage is not none %}{{ "%.2f"|format(entry.percentage) }}%{% endif %}</td>
+                        <td style="width:35px;font-size:11px;text-align:right;">
+                            {% if entry.diff is not none %}
+                                {% if entry.diff > 0 %}
+                                <span style="color:green;">{{ "%.2f"|format(entry.diff) }}&#8593;</span>
+                                {% elif entry.diff < 0 %}
+                                <span style="color:red;">{{ "%.2f"|format(entry.diff) }}&#8595;</span>
+                                {% else %}
+                                <span style="color:gray;">&nbsp;-&nbsp;</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </table>
+            </td>
+            {% endfor %}
+            </tr>
+
+            <!-- SECTORS ROW -->
+            <tr style="text-align:left;">
+            {% for date_key in dates %}
+            <td style="border:1px solid white;vertical-align:top;">
+                {% if loop.first %}<b style="margin-top:3%;margin-bottom:3%;">Sectors</b>
+                {% else %}<br>
+                {% endif %}
+                <table class="sectors-table" style="font-family:arial,sans-serif;font-size:9pt;border-collapse:collapse;width:330px;" cellpadding="1" cellspacing="2">
+                    <tr class="sectors-header" style="border-bottom:1px solid #ddd;text-align:left;">
+                        <td colspan="4"><b>{{ fund.sectors[date_key].date_label }}</b></td>
+                    </tr>
+                    {% if fund.sectors[date_key].entries %}
+                    <tr style="text-align:left;">
+                        <td colspan="4" class="data-date"><small><i>Updated on : {{ fund.sectors[date_key].data_date }}</i></small></td>
+                    </tr>
+                    {% endif %}
+                    {% for entry in fund.sectors[date_key].entries %}
+                    {% if not entry.diff_icon == 'removed' or entry.percentage is not none %}
+                    <tr style="border-bottom:1px solid #ddd;text-align:left;">
+                        <td style="width:20px;">
+                            {% if entry.diff_icon == 'new' %}
+                            <span class="icon-new">&#x2197;</span>
+                            {% elif entry.diff_icon == 'removed' %}
+                            <span class="icon-removed">&#x2198;</span>
+                            {% elif entry.diff_icon == 'returning' %}
+                            <span class="icon-returning">&#x21C5;</span>
+                            {% else %}
+                            &nbsp;
+                            {% endif %}
+                        </td>
+                        <td>{{ entry.name }}</td>
+                        <td>{% if entry.percentage is not none %}{{ "%.2f"|format(entry.percentage) }}%{% endif %}</td>
+                        <td style="width:35px;font-size:11px;text-align:right;">
+                            {% if entry.diff is not none %}
+                                {% if entry.diff > 0 %}
+                                <span style="color:green;">{{ "%.2f"|format(entry.diff) }}&#8593;</span>
+                                {% elif entry.diff < 0 %}
+                                <span style="color:red;">{{ "%.2f"|format(entry.diff) }}&#8595;</span>
+                                {% else %}
+                                <span style="color:gray;">&nbsp;-&nbsp;</span>
+                                {% endif %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </table>
+            </td>
+            {% endfor %}
+            </tr>
+
+        </table>
+    </li>
+    {% endfor %}
+    </ul>
+    <p class="generated">Generated on {{ generated_at }}</p>
+</div>
+<script>
+$(document).ready(function(){
+    $("#myInput").on("keyup", function() {
+        var value = $(this).val().toLowerCase();
+        $("#myList li").filter(function() {
+            $(this).toggle($(this).text().toLowerCase().indexOf(value) > -1)
+        });
+    });
+});
+</script>
+</body>
+</html>

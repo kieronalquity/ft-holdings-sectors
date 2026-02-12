@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+bloomberg_data/
+output/
+nul
+_crosscheck_tmp.py
+*.log
+.streamlit/secrets.toml
+extensions/

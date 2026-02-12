@@ -1,0 +1,54 @@
+database:
+  path: data/holdings_sectors.db
+
+report:
+  output_dir: output
+  filename_pattern: "holdings_sectors_{date}.html"
+  snapshots_to_compare: 4
+
+scraping:
+  delay_between_requests: 2.0
+  timeout: 30
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  max_retries: 3
+
+funds:
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00BK1M2D10:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00BG7PPH10:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=GB00B1FXTG93:GBX"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0858290173:GBP"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00B1L8MC56:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00B3SHFF36:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0946219929:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0511423146:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=FR0013291895:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0491816475:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=GB0033874768:GBP"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=GB00B5448K84:GBP"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00BD065K35:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00BMC5GD19:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1711900537:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU2095310384:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1434524093:EUR"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0992626480:EUR"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1805264477:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00B6RSJ564:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0383826160:EUR"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00093NYSB8:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1102506067:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=FR0013082666:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00BDGV0J60:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU2051469208:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=MISFX"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0602539354:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00BFMFDD19:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1692110783:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1965310680:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=GB00B64TS998:GBP"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU2051760473:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0571085686:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0293692918:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0443655294:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1049768598:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1070052771:USD"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1070051617:USD"
