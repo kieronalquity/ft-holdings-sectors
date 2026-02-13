@@ -150,17 +150,20 @@ def render_overview(df, peers_info, selected_peers, alq_name):
     c4.metric("Unique Positions", len(uniq["alquity_unique"]))
 
     st.subheader("Peer Fund Summary")
+    # Build a holdings_date lookup from peers_info
+    date_lookup = dict(zip(peers_info["fund_name"], peers_info["holdings_date"]))
+
     summary_rows = []
     for _, row in conc.iterrows():
         tag = " (Alquity)" if row["is_alquity"] else ""
+        fund = row["fund_name"]
         summary_rows.append({
-            "Fund": row["fund_name"] + tag,
+            "Fund": fund + tag,
+            "Portfolio Date": date_lookup.get(fund, ""),
             "Positions": int(row["num_positions"]),
             "Top 10 %": round(row["top_10_weight"], 1),
             "Top 20 %": round(row["top_20_weight"], 1),
-            "HHI": row["hhi"],
-            "Eff. Positions": row["effective_positions"],
-            "Max Holding": row["max_position_name"],
+            "Largest Holding": row["max_position_name"],
             "Max %": round(row["max_position_weight"], 2),
         })
     show_df(pd.DataFrame(summary_rows))
