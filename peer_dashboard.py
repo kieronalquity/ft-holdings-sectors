@@ -7,6 +7,8 @@ import plotly.graph_objects as go
 from bloomberg_loader import (
     init_bbg_db, get_available_snapshots,
     get_peer_funds, load_holdings, load_master_data,
+    get_latest_bloomberg_snapshot_id, load_ft_snapshot_data,
+    get_ft_snapshots,
 )
 from peer_analytics import (
     enrich_holdings, holdings_overlap, conviction_positions,
@@ -78,19 +80,32 @@ def main():
         # Snapshot selector (visually below Filter Peers)
         snap_options = {s["snapshot_id"]: f"{s['snapshot_date']} ({s['file_name']})" for s in snapshots}
         selected_snap = st.selectbox("Snapshot", list(snap_options.keys()), format_func=lambda x: snap_options[x])
+        selected_snap_type = next(s["snapshot_type"] for s in snapshots if s["snapshot_id"] == selected_snap)
+
+        # For FT-only snapshots, use the latest Bloomberg snapshot for tabs 1-9
+        bbg_snap = selected_snap
+        if selected_snap_type == "ft_only":
+            bbg_snap = get_latest_bloomberg_snapshot_id(DB_PATH)
+            if not bbg_snap:
+                st.error("No Bloomberg data available. Upload a Bloomberg Excel first.")
+                return
 
         # Load peer list and render the filter in the reserved slot above
-        peers_info = get_peer_funds(DB_PATH, selected_snap, peer_set)
+        peers_info = get_peer_funds(DB_PATH, bbg_snap, peer_set)
         all_peer_names = peers_info[peers_info["is_alquity"] == 0]["fund_name"].tolist()
         with peers_container:
             selected_peers = st.multiselect("Filter Peers", all_peer_names, default=all_peer_names)
 
         st.divider()
-        st.caption(f"Snapshot: {snapshots[0]['snapshot_date']}")
+        if selected_snap_type == "ft_only":
+            st.caption(f"Old View: FT data ({next(s['snapshot_date'] for s in snapshots if s['snapshot_id'] == selected_snap)})")
+            st.caption(f"Other tabs: Bloomberg data")
+        else:
+            st.caption(f"Snapshot: {next(s['snapshot_date'] for s in snapshots if s['snapshot_id'] == selected_snap)}")
 
     # ── Load & enrich ────────────────────────────────────────────
-    holdings = load_holdings(DB_PATH, selected_snap, peer_set, exclude_cash=True, min_weight=0.0)
-    master = load_master_data(DB_PATH, selected_snap)
+    holdings = load_holdings(DB_PATH, bbg_snap, peer_set, exclude_cash=True, min_weight=0.0)
+    master = load_master_data(DB_PATH, bbg_snap)
     df = enrich_holdings(holdings, master)
 
     # Apply peer filter
@@ -127,7 +142,12 @@ def main():
     with tabs[8]:
         render_consensus(df)
     with tabs[9]:
-        render_old_view(df, alq_name)
+        # Always show FT Old View if FT snapshots exist
+        ft_snaps_available = get_ft_snapshots(DB_PATH)
+        if ft_snaps_available:
+            render_old_view_ft(peer_set, bbg_snap)
+        else:
+            render_old_view(df, alq_name)
 
 
 # =====================================================================
@@ -531,8 +551,9 @@ def render_market_cap(df, alq_name):
             show_df(d.round(2))
 
 
-def _old_view_table_html(rows: list[tuple[str, str]], header_label: str, style: str = "holdings") -> str:
+def _old_view_table_html(rows: list[tuple], header_label: str, style: str = "holdings") -> str:
     """Build an HTML table string for old-view cards.
+    rows: list of (name, pct_str) or (name, pct_str, change_indicator).
     style: 'holdings' (gray), 'sector' (purple), 'country' (blue-tinted).
     """
     styles = {
@@ -541,15 +562,29 @@ def _old_view_table_html(rows: list[tuple[str, str]], header_label: str, style: 
         "country": ("background-color:#eaf4fc;", "background-color:#a8d0e6;", "border:1px solid #eaf4fc;"),
     }
     bg, hdr_bg, border = styles.get(style, styles["holdings"])
+    has_change = any(len(r) > 2 for r in rows)
+    colspan = "3" if has_change else "2"
 
     lines = [f'<table style="{border}{bg}font-family:arial,sans-serif;font-size:9pt;'
              f'border-collapse:collapse;width:100%;" cellpadding="1" cellspacing="2">']
     lines.append(f'<tr style="{hdr_bg}border-bottom:1px solid #ddd;text-align:left;">'
-                 f'<td colspan="2" style="padding:4px 6px;{hdr_bg}"><b>{header_label}</b></td></tr>')
-    for name, pct in rows:
+                 f'<td colspan="{colspan}" style="padding:4px 6px;{hdr_bg}"><b>{header_label}</b></td></tr>')
+    for row in rows:
+        name, pct = row[0], row[1]
+        if not name and not pct:
+            # Empty padding row — maintain height
+            empty_td = f'<td style="padding:4px 6px;">&nbsp;</td>' * (3 if has_change else 2)
+            lines.append(f'<tr style="border-bottom:1px solid #ddd;">{empty_td}</tr>')
+            continue
+        change_html = ""
+        if has_change and len(row) > 2 and row[2]:
+            change_html = f'<td style="padding:1px 4px;white-space:nowrap;font-size:8pt;">{row[2]}</td>'
+        elif has_change:
+            change_html = '<td style="padding:1px 4px;"></td>'
         lines.append(f'<tr style="border-bottom:1px solid #ddd;text-align:left;">'
                      f'<td style="padding:4px 6px;">{name}</td>'
-                     f'<td style="padding:4px 6px;white-space:nowrap;text-align:right;">{pct}</td></tr>')
+                     f'<td style="padding:4px 6px;white-space:nowrap;text-align:right;">{pct}</td>'
+                     f'{change_html}</tr>')
     lines.append('</table>')
     return "\n".join(lines)
 
@@ -617,6 +652,161 @@ def render_old_view(df, alq_name):
         with col_c:
             st.markdown("**Country / Region**")
             st.markdown(_old_view_table_html(c_rows, "Country", style="country"), unsafe_allow_html=True)
+
+
+
+def _normalize_ft_fund_name(name: str) -> str:
+    """Normalize FT fund names for consistent matching across snapshots."""
+    # Fix Nomura unicode/encoding variants
+    name = name.replace(" ? ", " - ")
+    name = name.replace("\u2013", "-").replace("\u2014", "-")
+    return name
+
+
+# Funds to exclude from Old View (duplicates in historical data)
+_OLD_VIEW_EXCLUDE = {
+    "Nomura Funds Ireland plc - India Equity Fund Class A USD",
+}
+
+
+def _change_indicator(current: float, previous: float) -> str:
+    """Return a subtle HTML change indicator comparing current vs previous percentage."""
+    diff = current - previous
+    if abs(diff) < 0.005:
+        return ""
+    if diff > 0:
+        return f'<span style="color:#4caf50;font-size:8pt;">+{diff:.1f}&#x25B2;</span>'
+    return f'<span style="color:#e53935;font-size:8pt;">{diff:.1f}&#x25BC;</span>'
+
+
+def _new_entry_indicator() -> str:
+    return '<span style="color:#4caf50;font-size:8pt;">new</span>'
+
+
+def _build_rows_with_changes(current_df, prev_df, category: str):
+    """Build table rows with change indicators vs the previous snapshot.
+    Returns list of (name, pct_str, change_html) tuples.
+    """
+    cur = current_df[current_df["category"] == category].sort_values("percentage", ascending=False)
+    if cur.empty:
+        return []
+
+    prev_lookup = {}
+    if prev_df is not None and not prev_df.empty:
+        prev_cat = prev_df[prev_df["category"] == category]
+        prev_lookup = dict(zip(prev_cat["name"], prev_cat["percentage"]))
+
+    rows = []
+    for _, r in cur.iterrows():
+        pct_str = f"{r['percentage']:.2f}%"
+        change = ""
+        if prev_lookup:
+            if r["name"] in prev_lookup:
+                change = _change_indicator(r["percentage"], prev_lookup[r["name"]])
+            else:
+                change = _new_entry_indicator()
+        rows.append((r["name"], pct_str, change))
+    return rows
+
+
+def render_old_view_ft(peer_set: str, bbg_snap: int):
+    """Old View tab with side-by-side date columns (last 3 months of FT data)."""
+    ft_snaps = get_ft_snapshots(DB_PATH)
+    if not ft_snaps:
+        st.warning("No FT data available.")
+        return
+
+    # Take at most 3 most recent FT snapshots
+    ft_snaps = ft_snaps[:3]
+
+    # Load data for each snapshot, normalizing fund names
+    snap_data = []
+    for snap in ft_snaps:
+        data = load_ft_snapshot_data(DB_PATH, snap["snapshot_id"], peer_set=peer_set)
+        if not data.empty:
+            data["fund_name"] = data["fund_name"].apply(_normalize_ft_fund_name)
+            data = data[~data["fund_name"].isin(_OLD_VIEW_EXCLUDE)]
+            snap_data.append({"snap": snap, "data": data})
+
+    if not snap_data:
+        st.warning("No FT data for this peer set.")
+        return
+
+    # Reverse: oldest on left, newest on right
+    snap_data = list(reversed(snap_data))
+
+    n_dates = len(snap_data)
+    date_labels = [s["snap"]["snapshot_date"] for s in snap_data]
+    st.caption(f"Source: FT.com data — {', '.join(date_labels)} (oldest → newest)")
+
+    # Collect all fund names across all snapshots, preserving Alquity-first order
+    all_funds = {}  # fund_name -> is_alquity
+    for sd in snap_data:
+        for _, row in sd["data"].drop_duplicates("fund_name").iterrows():
+            fn = row["fund_name"]
+            if fn not in all_funds:
+                all_funds[fn] = row["is_alquity"]
+
+    alq_funds = sorted([f for f, a in all_funds.items() if a == 1])
+    peer_funds = sorted([f for f, a in all_funds.items() if a == 0])
+    funds = alq_funds + peer_funds
+
+    for fund_name in funds:
+        is_alq = all_funds[fund_name] == 1
+
+        hdr_bg = "#535050" if is_alq else "#6b6b6b"
+        tag = " (Alquity)" if is_alq else ""
+        st.markdown(
+            f'<div style="background-color:{hdr_bg};padding:10px;color:white;'
+            f'font-family:arial,sans-serif;font-size:10pt;font-weight:bold;'
+            f'margin-top:16px;border-radius:4px 4px 0 0;">'
+            f'{fund_name}{tag}</div>',
+            unsafe_allow_html=True,
+        )
+
+        cols = st.columns(n_dates)
+
+        # Check if any date has Regions data for this fund
+        has_regions = any(
+            not sd["data"][(sd["data"]["fund_name"] == fund_name) & (sd["data"]["category"] == "Regions")].empty
+            for sd in snap_data
+        )
+
+        for d_idx, sd in enumerate(snap_data):
+            fund_df = sd["data"][sd["data"]["fund_name"] == fund_name]
+            date_label = sd["snap"]["snapshot_date"]
+
+            # Previous snapshot for change comparison (one column to the left)
+            prev_df = None
+            if d_idx > 0:
+                prev_sd = snap_data[d_idx - 1]
+                prev_df = prev_sd["data"][prev_sd["data"]["fund_name"] == fund_name]
+
+            with cols[d_idx]:
+                # Build one combined HTML block for alignment across columns
+                html_parts = [f'<div style="font-family:arial,sans-serif;font-size:10pt;'
+                              f'font-weight:bold;margin-bottom:6px;">{date_label}</div>']
+
+                h_rows = _build_rows_with_changes(fund_df, prev_df, "Holdings")
+                # Pad holdings to 10 rows so sector tables align
+                while len(h_rows) < 10:
+                    h_rows.append(("", "", ""))
+                html_parts.append(_old_view_table_html(h_rows, "Top 10 Holdings", style="holdings"))
+
+                s_rows = _build_rows_with_changes(fund_df, prev_df, "Sectors")
+                if s_rows:
+                    html_parts.append('<div style="margin-top:8px;"></div>')
+                    html_parts.append(_old_view_table_html(s_rows, "Sectors", style="sector"))
+
+                if has_regions:
+                    r_rows = _build_rows_with_changes(fund_df, prev_df, "Regions")
+                    html_parts.append('<div style="margin-top:8px;"></div>')
+                    if r_rows:
+                        html_parts.append(_old_view_table_html(r_rows, "Regions (FT)", style="country"))
+                    else:
+                        html_parts.append('<div style="height:20px;"></div>')
+
+                st.markdown("\n".join(html_parts), unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

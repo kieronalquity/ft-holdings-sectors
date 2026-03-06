@@ -17,6 +17,8 @@ class ScrapedEntry:
     percentage: float
     date_of_data: str    # ISO YYYY-MM-DD
     url: str
+    peer_set: str = ""   # 'India', 'Asia', 'FW'
+    is_alquity: bool = False
 
 
 def scrape_all_funds(config: dict) -> list:
@@ -30,14 +32,20 @@ def scrape_all_funds(config: dict) -> list:
     session = requests.Session()
     session.headers.update({"User-Agent": user_agent})
 
-    fund_urls = [f["url"] for f in config.get("funds", [])]
-    total = len(fund_urls)
+    funds = config.get("funds", [])
+    total = len(funds)
 
-    for i, url in enumerate(fund_urls, 1):
+    for i, fund_cfg in enumerate(funds, 1):
+        url = fund_cfg["url"]
+        peer_set = fund_cfg.get("peer_set", "")
+        is_alquity = fund_cfg.get("is_alquity", False)
         logger.info("[%d/%d] Scraping %s", i, total, url)
         for attempt in range(1, max_retries + 1):
             try:
                 fund_entries = scrape_single_fund(url, session, timeout)
+                for e in fund_entries:
+                    e.peer_set = peer_set
+                    e.is_alquity = is_alquity
                 entries.extend(fund_entries)
                 logger.info("  -> %d entries scraped", len(fund_entries))
                 break

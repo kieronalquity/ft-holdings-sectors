@@ -8,6 +8,7 @@ import yaml
 from scraper import scrape_all_funds
 from db import init_db, insert_scrape_results, get_comparison_data
 from report import generate_report
+from bloomberg_loader import create_ft_snapshot, import_historical_html
 
 
 def load_config(config_path: str) -> dict:
@@ -23,11 +24,14 @@ def main():
     parser = argparse.ArgumentParser(description="FT Holdings & Sectors Automation")
     parser.add_argument("--scrape", action="store_true", help="Scrape fund data from FT")
     parser.add_argument("--report", action="store_true", help="Generate comparison HTML report")
+    parser.add_argument("--ft-only", action="store_true", help="FT scrape only — update Old View in dashboard (no Bloomberg re-ingest)")
+    parser.add_argument("--label", type=str, default=None, help="Label for the FT-only snapshot (e.g. 'Run 05/03 - only Old view update')")
+    parser.add_argument("--import-history", type=str, default=None, help="Import historical FT data from HTML file")
     parser.add_argument("--config", default="config.yaml", help="Path to config file (default: config.yaml)")
     args = parser.parse_args()
 
-    # If neither flag is set, do both
-    if not args.scrape and not args.report:
+    # If no flags are set, do scrape + report (legacy behaviour)
+    if not args.scrape and not args.report and not args.ft_only and not args.import_history:
         args.scrape = True
         args.report = True
 
@@ -65,6 +69,31 @@ def main():
             print(f"Report saved to: {output_path}")
         else:
             print("Report generation failed.")
+
+    if args.import_history:
+        print(f"\nImporting historical FT data from: {args.import_history}")
+        result = import_historical_html(db_path, args.import_history)
+        if "error" in result:
+            print(f"Error: {result['error']}")
+        else:
+            print(f"Dates found: {result['dates_found']}")
+            for s in result["snapshots"]:
+                if s.get("skipped"):
+                    print(f"  {s['label']}: already exists (id={s['snapshot_id']})")
+                else:
+                    print(f"  {s['label']}: {s['num_entries']} entries (id={s['snapshot_id']})")
+
+    if args.ft_only:
+        from datetime import date
+        print(f"\nFT-only scrape: updating Old View data...")
+        entries = scrape_all_funds(config)
+        if not entries:
+            print("No data scraped from FT.")
+            return
+        label = args.label or f"Run {date.today().strftime('%d/%m')} - only Old view update"
+        result = create_ft_snapshot(db_path, entries, label=label)
+        print(f"FT snapshot created: {result['label']} ({result['num_entries']} entries)")
+        print("Push to GitHub to update the live dashboard.")
 
 
 if __name__ == "__main__":
