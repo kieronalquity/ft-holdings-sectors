@@ -1,5 +1,6 @@
 """Alquity Peer Analysis Dashboard — Streamlit app."""
 
+import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -683,9 +684,33 @@ def _new_entry_indicator() -> str:
     return '<span style="color:#4caf50;font-size:8pt;">new</span>'
 
 
+_CO_SUFFIX_RE = re.compile(
+    r'\b(?:limited|ltd|incorporated|inc|corporation|corp|company|co|plc|'
+    r'holdings|hldgs|group|grp|llc|llp|ag|se|nv|sa)\b\.?',
+    re.IGNORECASE,
+)
+_LEADING_THE_RE = re.compile(r'^the\s+', re.IGNORECASE)
+_PUNCT_RE = re.compile(r'[\s,\.\-/]+')
+
+
+def _normalize_company_name(name) -> str:
+    """Normalize a holding name for cross-snapshot comparison.
+    Strips corporate suffixes (Ltd/Limited/Inc/PLC/etc), leading 'The',
+    punctuation, and case — so 'HDFC Bank Ltd' == 'HDFC Bank Limited'.
+    Maps '&' to 'and' so 'Mahindra & Mahindra' == 'Mahindra and Mahindra'."""
+    if not isinstance(name, str) or not name:
+        return ""
+    s = name.replace('&', ' and ')
+    s = _CO_SUFFIX_RE.sub('', s)
+    s = _LEADING_THE_RE.sub('', s.strip())
+    s = _PUNCT_RE.sub(' ', s).strip().lower()
+    return s
+
+
 def _build_rows_with_changes(current_df, prev_df, category: str):
     """Build table rows with change indicators vs the previous snapshot.
     Returns list of (name, pct_str, change_html) tuples.
+    Uses normalized names for matching so 'HDFC Bank Ltd' matches 'HDFC Bank Limited'.
     """
     cur = current_df[current_df["category"] == category].sort_values("percentage", ascending=False)
     if cur.empty:
@@ -694,15 +719,19 @@ def _build_rows_with_changes(current_df, prev_df, category: str):
     prev_lookup = {}
     if prev_df is not None and not prev_df.empty:
         prev_cat = prev_df[prev_df["category"] == category]
-        prev_lookup = dict(zip(prev_cat["name"], prev_cat["percentage"]))
+        for nm, pct in zip(prev_cat["name"], prev_cat["percentage"]):
+            key = _normalize_company_name(nm)
+            if key:
+                prev_lookup[key] = pct
 
     rows = []
     for _, r in cur.iterrows():
         pct_str = f"{r['percentage']:.2f}%"
         change = ""
         if prev_lookup:
-            if r["name"] in prev_lookup:
-                change = _change_indicator(r["percentage"], prev_lookup[r["name"]])
+            key = _normalize_company_name(r["name"])
+            if key in prev_lookup:
+                change = _change_indicator(r["percentage"], prev_lookup[key])
             else:
                 change = _new_entry_indicator()
         rows.append((r["name"], pct_str, change))
