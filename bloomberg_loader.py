@@ -122,8 +122,12 @@ def init_bbg_db(db_path: str) -> None:
 # Ingestion
 # ---------------------------------------------------------------------------
 
-def ingest_bloomberg_excel(file_path: str, db_path: str, replace: bool = False) -> dict:
+def ingest_bloomberg_excel(file_path: str, db_path: str, replace: bool = False,
+                           label: str | None = None) -> dict:
     """Ingest a Bloomberg peer holdings Excel file into the database.
+
+    label: optional display name stored as file_name (e.g. 'Run 18/09 - BBG and FT updated').
+           When omitted the Excel filename is used. Duplicate detection checks both.
 
     Returns summary dict with counts and any errors.
     """
@@ -134,14 +138,14 @@ def ingest_bloomberg_excel(file_path: str, db_path: str, replace: bool = False) 
     init_bbg_db(db_path)
 
     snapshot_date = _extract_snapshot_date(path.name)
-    file_name = path.name
+    file_name = label or path.name
 
     conn = sqlite3.connect(db_path)
     try:
-        # Check for existing snapshot
+        # Check for existing snapshot (by label or by Excel filename)
         existing = conn.execute(
-            "SELECT snapshot_id FROM bbg_snapshots WHERE snapshot_date=? AND file_name=?",
-            (snapshot_date, file_name),
+            "SELECT snapshot_id FROM bbg_snapshots WHERE snapshot_date=? AND file_name IN (?, ?)",
+            (snapshot_date, file_name, path.name),
         ).fetchone()
 
         if existing:
@@ -150,6 +154,7 @@ def ingest_bloomberg_excel(file_path: str, db_path: str, replace: bool = False) 
                 conn.execute("DELETE FROM bbg_holdings WHERE snapshot_id=?", (sid,))
                 conn.execute("DELETE FROM bbg_peer_groups WHERE snapshot_id=?", (sid,))
                 conn.execute("DELETE FROM bbg_master_data WHERE snapshot_id=?", (sid,))
+                conn.execute("DELETE FROM ft_snapshot_data WHERE snapshot_id=?", (sid,))
                 conn.execute("DELETE FROM bbg_snapshots WHERE snapshot_id=?", (sid,))
                 conn.commit()
             else:
@@ -468,8 +473,52 @@ def get_latest_bloomberg_snapshot_id(db_path: str) -> int | None:
         conn.close()
 
 
+def _ft_rows(snapshot_id: int, entries: list) -> list:
+    return [
+        (snapshot_id, e.fund_name, e.category, e.company_sector,
+         e.percentage, e.date_of_data, getattr(e, 'peer_set', ''),
+         1 if getattr(e, 'is_alquity', False) else 0)
+        for e in entries
+    ]
+
+
+def attach_ft_data(db_path: str, snapshot_id: int, entries: list) -> dict:
+    """Attach scraped FT entries to an EXISTING snapshot (e.g. a Bloomberg one),
+    so a single run produces one combined snapshot. Replaces any FT data already
+    attached to that snapshot.
+
+    entries: list of ScrapedEntry objects from scraper.scrape_all_funds().
+    """
+    init_bbg_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT file_name FROM bbg_snapshots WHERE snapshot_id=?", (snapshot_id,)
+        ).fetchone()
+        if not row:
+            raise ValueError(f"snapshot_id {snapshot_id} does not exist")
+        conn.execute("DELETE FROM ft_snapshot_data WHERE snapshot_id=?", (snapshot_id,))
+        rows = _ft_rows(snapshot_id, entries)
+        conn.executemany(
+            "INSERT INTO ft_snapshot_data "
+            "(snapshot_id, fund_name, category, name, percentage, date_of_data, peer_set, is_alquity) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        conn.commit()
+        return {"snapshot_id": snapshot_id, "num_entries": len(rows), "label": row[0]}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def create_ft_snapshot(db_path: str, entries: list, label: str | None = None) -> dict:
-    """Create an FT-only snapshot from scraped FT entries.
+    """Create a standalone FT-only snapshot from scraped FT entries.
+
+    Prefer attach_ft_data() for the normal combined run (run.py --update);
+    this remains for FT-only refreshes between Bloomberg uploads.
 
     entries: list of ScrapedEntry objects from scraper.scrape_all_funds().
     label: optional display label, e.g. 'Run 05/03 - only Old view update'.
@@ -488,13 +537,7 @@ def create_ft_snapshot(db_path: str, entries: list, label: str | None = None) ->
             (snap_date, file_name, datetime.now().isoformat()),
         )
         snapshot_id = cur.lastrowid
-
-        rows = [
-            (snapshot_id, e.fund_name, e.category, e.company_sector,
-             e.percentage, e.date_of_data, getattr(e, 'peer_set', ''),
-             1 if getattr(e, 'is_alquity', False) else 0)
-            for e in entries
-        ]
+        rows = _ft_rows(snapshot_id, entries)
         conn.executemany(
             "INSERT INTO ft_snapshot_data "
             "(snapshot_id, fund_name, category, name, percentage, date_of_data, peer_set, is_alquity) "
@@ -756,12 +799,17 @@ def import_historical_html(db_path: str, html_path: str) -> dict:
 
 
 def get_ft_snapshots(db_path: str) -> list:
-    """Return all FT-only snapshots ordered by date."""
+    """Return all snapshots that carry FT data, newest first.
+
+    Data-driven rather than type-driven: covers legacy 'ft_only' snapshots AND
+    combined Bloomberg+FT runs (run.py --update), which keep snapshot_type='bloomberg'.
+    """
     conn = sqlite3.connect(db_path)
     try:
         rows = conn.execute(
             "SELECT snapshot_id, snapshot_date, file_name FROM bbg_snapshots "
-            "WHERE snapshot_type='ft_only' ORDER BY snapshot_date DESC"
+            "WHERE snapshot_id IN (SELECT DISTINCT snapshot_id FROM ft_snapshot_data) "
+            "ORDER BY snapshot_date DESC, snapshot_id DESC"
         ).fetchall()
         return [{"snapshot_id": r[0], "snapshot_date": r[1], "file_name": r[2]} for r in rows]
     finally:
