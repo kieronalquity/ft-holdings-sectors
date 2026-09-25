@@ -15,7 +15,7 @@ from peer_analytics import (
     enrich_holdings, holdings_overlap, conviction_positions,
     unique_positions, consensus_holdings, country_allocation,
     sector_allocation, concentration_metrics, active_share,
-    market_cap_analysis,
+    market_cap_analysis, peer_holdings_missing,
 )
 
 DB_PATH = "data/holdings_sectors.db"
@@ -113,7 +113,7 @@ def main():
 
         st.divider()
         if selected_snap_type == "ft_only":
-            st.caption(f"Old View: FT data ({next(s['snapshot_date'] for s in snapshots if s['snapshot_id'] == selected_snap)})")
+            st.caption(f"Top 10: FT data ({next(s['snapshot_date'] for s in snapshots if s['snapshot_id'] == selected_snap)})")
             st.caption(f"Other tabs: Bloomberg data")
         else:
             st.caption(f"Snapshot: {next(s['snapshot_date'] for s in snapshots if s['snapshot_id'] == selected_snap)}")
@@ -132,14 +132,22 @@ def main():
         return
 
     # ── Tabs ─────────────────────────────────────────────────────
+    # Date the FT Top 10 was last refreshed: the selected snapshot's own FT data
+    # if it carries any, otherwise the most recent FT scrape.
+    ft_snaps = get_ft_snapshots(DB_PATH)
+    top10_date = ""
+    if ft_snaps:
+        match = [f for f in ft_snaps if f["snapshot_id"] == selected_snap]
+        top10_date = (match[0] if match else ft_snaps[0])["snapshot_date"]
+
     tabs = st.tabs([
         "Overview", "Conviction", "Country", "Sector", "Market Cap",
-        "Unique Holdings", "Holdings Overlap", "Concentration & Active Share",
-        "Consensus", "Old View",
+        "Unique Holdings", "Peer Holdings", "Holdings Overlap",
+        "Concentration & Active Share", "Consensus", "Top 10",
     ])
 
     with tabs[0]:
-        render_overview(df, peers_info, selected_peers, alq_name)
+        render_overview(df, peers_info, selected_peers, alq_name, top10_date)
     with tabs[1]:
         render_conviction(df)
     with tabs[2]:
@@ -151,15 +159,16 @@ def main():
     with tabs[5]:
         render_unique(df)
     with tabs[6]:
-        render_overlap(df, alq_name)
+        render_peer_holdings(df, alq_name)
     with tabs[7]:
-        render_concentration_active(df, alq_name)
+        render_overlap(df, alq_name)
     with tabs[8]:
-        render_consensus(df)
+        render_concentration_active(df, alq_name)
     with tabs[9]:
-        # Always show FT Old View if FT snapshots exist
-        ft_snaps_available = get_ft_snapshots(DB_PATH)
-        if ft_snaps_available:
+        render_consensus(df)
+    with tabs[10]:
+        # Always show FT Top 10 view if FT snapshots exist
+        if ft_snaps:
             render_old_view_ft(peer_set, bbg_snap)
         else:
             render_old_view(df, alq_name)
@@ -169,7 +178,7 @@ def main():
 # Tab renderers
 # =====================================================================
 
-def render_overview(df, peers_info, selected_peers, alq_name):
+def render_overview(df, peers_info, selected_peers, alq_name, top10_date=""):
     """Tab 1: Overview with key metrics and peer summary."""
     ashr = active_share(df)
     conc = concentration_metrics(df)
@@ -180,7 +189,7 @@ def render_overview(df, peers_info, selected_peers, alq_name):
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Alquity Holdings", int(alq_conc.get("num_positions", 0)))
-    c2.metric("Active Share vs Consensus", f"{ashr['vs_consensus']}%")
+    c2.metric("Active Share", f"{ashr['vs_consensus']}%")
     c3.metric("Top 10 Concentration", f"{alq_conc.get('top_10_weight', 0):.1f}%")
     c4.metric("Unique Positions", len(uniq["alquity_unique"]))
 
@@ -194,7 +203,8 @@ def render_overview(df, peers_info, selected_peers, alq_name):
         fund = row["fund_name"]
         summary_rows.append({
             "Fund": fund + tag,
-            "Portfolio Date": date_lookup.get(fund, ""),
+            "BBG Portfolio Date": date_lookup.get(fund, ""),
+            "Top 10 Refresh Date": top10_date,
             "Positions": int(row["num_positions"]),
             "Top 10 %": round(row["top_10_weight"], 1),
             "Top 20 %": round(row["top_20_weight"], 1),
@@ -343,14 +353,32 @@ def render_unique(df):
         r.columns = ["Ticker", "Name", "Weight %", "Peer Count", "Country", "Sector"]
         show_df(r.round(2))
 
-    st.subheader("Peer Consensus Missing from Alquity")
-    st.caption("Stocks held by >50% of peers that Alquity does not own")
-    if uniq["peer_consensus_missing"].empty:
-        st.success("Alquity holds all major consensus positions.")
+
+
+def render_peer_holdings(df, alq_name):
+    """Tab: browse a single peer's full holdings, plus everything peers own that Alquity doesn't."""
+    peers = df[df["is_alquity"] == 0]
+    peer_names = sorted(peers["fund_name"].unique().tolist())
+
+    st.subheader("Peer Holdings")
+    if not peer_names:
+        st.info("No peer funds in the current selection.")
     else:
-        m = uniq["peer_consensus_missing"].copy()
-        m.columns = ["Ticker", "# Peers Holding", "Avg Weight %", "Name", "Country", "Sector"]
-        m = m[["Ticker", "Name", "# Peers Holding", "Avg Weight %", "Country", "Sector"]]
+        peer_choice = st.selectbox("Select peer", peer_names, key="peer_holdings_fund")
+        p = peers[peers["fund_name"] == peer_choice][["ticker", "short_name", "weight", "country", "gics_sector"]].copy()
+        p = p.sort_values("weight", ascending=False)
+        p.columns = ["Ticker", "Name", "Weight %", "Country", "Sector"]
+        st.caption(f"{peer_choice}: {len(p)} positions, {p['Weight %'].sum():.1f}% of portfolio")
+        show_df(p.round(2))
+
+    st.subheader("Peer Holdings Missing from Alquity")
+    st.caption("Every stock held by at least one peer that Alquity does not own")
+    m = peer_holdings_missing(df)
+    if m.empty:
+        st.success("Alquity holds every stock in the peer group.")
+    else:
+        m = m[["ticker", "short_name", "holder_count", "avg_weight", "country", "gics_sector"]].copy()
+        m.columns = ["Ticker", "Name", "# Peers Holding", "Avg Weight %", "Country", "Sector"]
         show_df(m.round(2))
 
 
@@ -753,7 +781,7 @@ def _build_rows_with_changes(current_df, prev_df, category: str):
 
 
 def render_old_view_ft(peer_set: str, bbg_snap: int):
-    """Old View tab with side-by-side date columns (last 3 months of FT data)."""
+    """Top 10 tab with side-by-side date columns (last 3 months of FT data)."""
     ft_snaps = get_ft_snapshots(DB_PATH)
     if not ft_snaps:
         st.warning("No FT data available.")

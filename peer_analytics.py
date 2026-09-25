@@ -201,6 +201,26 @@ def unique_positions(df: pd.DataFrame) -> dict:
     }
 
 
+def peer_holdings_missing(df: pd.DataFrame) -> pd.DataFrame:
+    """Every stock held by at least one peer that Alquity does NOT own.
+
+    Returns: ticker, short_name, holder_count, avg_weight, country, gics_sector,
+    sorted by holder_count then avg_weight (both descending).
+    """
+    alq, peers = _split_alquity(df)
+    missing = peers[~peers["ticker"].isin(set(alq["ticker"]))]
+    if missing.empty:
+        return pd.DataFrame(columns=["ticker", "short_name", "holder_count", "avg_weight", "country", "gics_sector"])
+    agg = missing.groupby("ticker").agg(
+        short_name=("short_name", "first"),
+        holder_count=("fund_name", "nunique"),
+        avg_weight=("weight", "mean"),
+        country=("country", "first"),
+        gics_sector=("gics_sector", "first"),
+    ).reset_index()
+    return agg.sort_values(["holder_count", "avg_weight"], ascending=[False, False]).reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------------
 # 4. Consensus Holdings
 # ---------------------------------------------------------------------------

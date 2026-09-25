@@ -414,13 +414,26 @@ def get_available_snapshots(db_path: str) -> list:
         conn.close()
 
 
+# Funds dropped from every peer set (substring match on the Bloomberg fund name).
+EXCLUDED_FUNDS = ("Premier Miton",)
+
+
+def _drop_excluded(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "fund_name" not in df.columns:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for pat in EXCLUDED_FUNDS:
+        mask |= df["fund_name"].str.contains(pat, case=False, na=False)
+    return df[~mask].reset_index(drop=True)
+
+
 def get_peer_funds(db_path: str, snapshot_id: int, peer_set: str) -> pd.DataFrame:
     conn = sqlite3.connect(db_path)
     try:
-        return pd.read_sql_query(
+        return _drop_excluded(pd.read_sql_query(
             "SELECT * FROM bbg_peer_groups WHERE snapshot_id=? AND peer_set=? ORDER BY is_alquity DESC, fund_name",
             conn, params=(snapshot_id, peer_set),
-        )
+        ))
     finally:
         conn.close()
 
@@ -443,7 +456,7 @@ def load_holdings(db_path: str, snapshot_id: int, peer_set: str,
         if min_weight > 0:
             query += " AND h.weight > ?"
             params.append(min_weight)
-        return pd.read_sql_query(query, conn, params=params)
+        return _drop_excluded(pd.read_sql_query(query, conn, params=params))
     finally:
         conn.close()
 
