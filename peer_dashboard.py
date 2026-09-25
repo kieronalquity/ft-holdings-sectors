@@ -31,6 +31,7 @@ _TABLE_CSS = """
     margin: 0.5rem 0 1rem 0;
 }
 .styled-table thead tr { background-color: #f0f2f6; text-align: left; }
+.styled-table thead th { position: sticky; top: 0; background-color: #f0f2f6; z-index: 1; }
 .styled-table th, .styled-table td {
     padding: 6px 10px; border-bottom: 1px solid #e0e0e0; white-space: nowrap; text-align: left;
 }
@@ -40,17 +41,30 @@ _TABLE_CSS = """
 """
 
 
-def show_df(df: pd.DataFrame, max_rows: int = 200) -> None:
-    """Render a DataFrame as a styled HTML table (no pyarrow needed)."""
+def show_df(df: pd.DataFrame, max_rows: int | None = None, scroll_after: int = 40) -> None:
+    """Render a DataFrame as a styled HTML table (no pyarrow needed).
+
+    All rows are rendered by default. Tables longer than ``scroll_after`` rows are
+    wrapped in a vertically scrollable box so they don't push the rest of the page
+    off screen. Pass ``max_rows`` to truncate explicitly.
+    """
     if df.empty:
         st.info("No data to display.")
         return
-    display = df.head(max_rows)
-    html = _TABLE_CSS + display.to_html(
+    display = df if max_rows is None else df.head(max_rows)
+    table = display.to_html(
         classes="styled-table", index=False, na_rep="", float_format=lambda x: f"{x:.2f}",
     )
-    if len(df) > max_rows:
+    if len(display) > scroll_after:
+        table = (
+            "<div style='max-height:600px;overflow-y:auto;border:1px solid #e0e0e0;'>"
+            + table + "</div>"
+        )
+    html = _TABLE_CSS + table
+    if max_rows is not None and len(df) > max_rows:
         html += f"<p style='color:#888;font-size:12px;'>Showing {max_rows} of {len(df)} rows</p>"
+    else:
+        html += f"<p style='color:#888;font-size:12px;'>{len(df)} rows</p>"
     st.markdown(html, unsafe_allow_html=True)
 PEER_SET_LABELS = {
     "India": "Indian Subcontinent",
