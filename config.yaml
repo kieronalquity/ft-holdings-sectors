@@ -166,3 +166,51 @@ funds:
   - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0478762148:USD"
     peer_set: FW
     # Robeco Emerging Markets Equities I USD
+
+# ── Manager factsheets (Top 10 tab source selection; see source_select.py) ──
+# 'fund' must equal the FT fund name as scraped. vehicle: same_class | same_fund | sister
+factsheets:
+  - fund: "Matthews Asia Funds - Pacific Tiger Fund I USD Acc"
+    peer_set: Asia
+    parser: matthews
+    vehicle: same_class
+    url: "https://global.matthewsasia.com/siteassets/resources/fund-documents/factsheets/lux_pacifictiger_i.pdf"
+  - fund: "Stewart Investors Asia Pacific Leaders Fund Class B (Accumulation) GBP"
+    peer_set: Asia
+    parser: stewart_fsi
+    vehicle: sister
+    # Irish VCC sister fund; the UK OEIC sheet shows countries/sectors as charts only
+    url: "https://www.stewartinvestors.com/uploadedFiles/Content/UploadedLiterature/Auto/EMEA/pdffundfactsheets/IE000AHU5WZ4-Stewart-Investors-Asia-Pacific-Leaders-Fund-I-USD-en-gb.pdf"
+  - fund: "Fidelity Funds - Asia Pacific Opportunities Fund Y-Acc-USD"
+    peer_set: Asia
+    parser: fidelity
+    vehicle: same_fund
+    # Finect/Morningstar document service; serves the latest monthly sheet (A-ACC-Euro class, fund-level data)
+    url: "https://www.finect.com/doclegal?language=451&investmentid=F000000RLV&documenttype=52&market=1440&investmenttype=1&format=PDF&frame=0"
+  - fund: "JPMorgan Funds - Asia Growth Fund I (acc) USD"
+    peer_set: Asia
+    parser: jpm_es
+    vehicle: same_fund
+    # Spanish-language sheet (D (acc) USD class); labels translated in the parser
+    url: "https://www.finect.com/doclegal?language=471&investmentid=F00000QFMB&documenttype=52&market=1440&investmenttype=1&format=PDF&frame=0"
+  - fund: "Veritas Asian Fund Fund D USD"
+    peer_set: Asia
+    parser: veritas
+    vehicle: same_class
+    url: "https://www.finect.com/doclegal?language=451&investmentid=F00000YIL5&documenttype=52&market=0&investmenttype=1&format=PDF&frame=0"
+  - fund: "GemAsia I USD"
+    peer_set: Asia
+    parser: gemway
+    vehicle: same_fund
+    url: "https://www.gemway.com/e/en/docs/funds/gemasia/MONTHLY_REPORT"
+
+# ── Top 10 tab source rules: decisions already taken so the run stops asking ──
+# fund = FT fund name; block optional (Top 10 | Countries | Sectors). Keys: accept_incomplete,
+# allow_sister, accept_stale. Add an entry here when you answer a QUESTION from run.py.
+source_rules: []
+
+# ── Peer sets whose Top 10 tab is driven by source selection (factsheet / Bloomberg / FT) ──
+# Other peer sets keep the plain FT view. Add FW / India once their factsheets are configured.
+top10_sources:
+  peer_sets:
+    - Asia

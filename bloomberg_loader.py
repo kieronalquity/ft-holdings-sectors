@@ -486,6 +486,22 @@ def get_latest_bloomberg_snapshot_id(db_path: str) -> int | None:
         conn.close()
 
 
+def _record_ft_isins(conn, entries: list) -> None:
+    """Remember which ISIN each FT fund name was scraped from, so Bloomberg funds (keyed by ISIN)
+    can be bridged to FT names even when FT renames a share class."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ft_fund_isin (isin TEXT PRIMARY KEY, fund_name TEXT NOT NULL, last_seen TEXT NOT NULL)")
+    seen = {}
+    for e in entries:
+        m = re.search(r"[?&]s=([A-Z]{2}[A-Z0-9]{10})", getattr(e, "url", "") or "")
+        if m:
+            seen[m.group(1).upper()] = e.fund_name
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.executemany("INSERT INTO ft_fund_isin (isin, fund_name, last_seen) VALUES (?,?,?) "
+                     "ON CONFLICT(isin) DO UPDATE SET fund_name=excluded.fund_name, last_seen=excluded.last_seen",
+                     [(k, v, now) for k, v in seen.items()])
+
+
 def _ft_rows(snapshot_id: int, entries: list) -> list:
     return [
         (snapshot_id, e.fund_name, e.category, e.company_sector,
@@ -518,6 +534,7 @@ def attach_ft_data(db_path: str, snapshot_id: int, entries: list) -> dict:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
+        _record_ft_isins(conn, entries)
         conn.commit()
         return {"snapshot_id": snapshot_id, "num_entries": len(rows), "label": row[0]}
     except Exception:
@@ -557,6 +574,7 @@ def create_ft_snapshot(db_path: str, entries: list, label: str | None = None) ->
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
+        _record_ft_isins(conn, entries)
         conn.commit()
         return {"snapshot_id": snapshot_id, "num_entries": len(rows), "label": file_name}
     except Exception:
@@ -582,6 +600,8 @@ FT_TO_BBG_NAME = {
     "Alquity SICAV - Alquity Asia Fund USD Y Class": "Alquity SICAV-Alquity Asia Y USD",
     "Matthews Asia Funds - Pacific Tiger Fund I USD Acc": "Matthews Asia Fds-Pacific Tiger I Acc USD",
     "Stewart Investors Asia Pacific Leaders Fund Class B (Accumulation) GBP": "Stewart Investors APac Leaders Fund B Acc GBP",
+    "Fidelity Funds - Asia Pacific Opportunities Fund Y-Acc-USD": "Fidelity Funds - Asia Pacific Opp Y-ACC-USD",
+    "JPMorgan Funds - Asia Growth Fund I (acc) USD": "JPM Asia Growth I Acc USD",
     # FW
     "Alquity SICAV - Alquity Future World Fund USD Y Class": "Alquity SICAV-Alquity Future World Y USD",
     "Aikya Global Emerging Markets Fund - UCITS I Share Class USD (Accumulating Shares)": "Aikya Global EM Fund - UCITS I USD Voting Acc",

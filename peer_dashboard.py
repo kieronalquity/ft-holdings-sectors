@@ -1,6 +1,7 @@
 """Alquity Peer Analysis Dashboard — Streamlit app."""
 
 import re
+import yaml
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -11,6 +12,7 @@ from bloomberg_loader import (
     get_latest_bloomberg_snapshot_id, load_ft_snapshot_data,
     get_ft_snapshots,
 )
+from source_select import select_all
 from peer_analytics import (
     enrich_holdings, holdings_overlap, conviction_positions,
     unique_positions, consensus_holdings, country_allocation,
@@ -780,8 +782,141 @@ def _build_rows_with_changes(current_df, prev_df, category: str):
     return rows
 
 
+@st.cache_data(ttl=600)
+def _load_config() -> dict:
+    try:
+        with open("config.yaml", "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except Exception:  # noqa: BLE001 - dashboard must still render without config
+        return {}
+
+
+def _source_peer_sets(cfg: dict) -> list:
+    return list((cfg.get("top10_sources") or {}).get("peer_sets") or [])
+
+
+def _rows_from_candidate(cand, prev_cand, pad_to: int = 0):
+    """(name, pct_str, change_html) rows for a chosen candidate, with change vs the previous
+    column only when it came from the same source."""
+    rows = []
+    prev_lookup = {}
+    same_source = prev_cand is not None and prev_cand.source == cand.source
+    if same_source:
+        keyfn = _normalize_company_name if cand.block == "Top 10" else (lambda s: str(s).strip().lower())
+        prev_lookup = {keyfn(n): p for n, p in prev_cand.rows}
+    for name, pct in cand.rows:
+        change = ""
+        if prev_lookup:
+            k = _normalize_company_name(name) if cand.block == "Top 10" else str(name).strip().lower()
+            change = _change_indicator(float(pct), prev_lookup[k]) if k in prev_lookup else _new_entry_indicator()
+        rows.append((name, f"{float(pct):.2f}%", change))
+    while len(rows) < pad_to:
+        rows.append(("", "", ""))
+    return rows
+
+
+def _caption(text: str, warn: bool = False) -> str:
+    color = "#b26a00" if warn else "#666"
+    return f'<div style="font-family:arial,sans-serif;font-size:8pt;color:{color};margin:2px 0 4px 0;">{text}</div>'
+
+
+def render_top10_sources(peer_set: str, cfg: dict):
+    """Top 10 tab driven by source selection (factsheet / Bloomberg / FT), see source_select.py.
+    Same side-by-side date layout as the FT view, with the chosen source and as-of date under
+    each table and the full candidate list in an expander."""
+    ft_snaps = get_ft_snapshots(DB_PATH)[:3]
+    if not ft_snaps:
+        st.warning("No FT data available.")
+        return
+    cfg_funds = [f["fund"] for f in cfg.get("factsheets", []) or [] if f.get("peer_set") == peer_set]
+    rules = cfg.get("source_rules", []) or []
+    snaps = list(reversed(ft_snaps))  # oldest -> newest
+    sels = []
+    for i, s in enumerate(snaps):
+        prev_id = snaps[i - 1]["snapshot_id"] if i > 0 else None
+        sels.append(select_all(DB_PATH, s["snapshot_id"], peer_set, cfg_funds, prev_id))
+    ft_regions = {}
+    for s in snaps:
+        d = load_ft_snapshot_data(DB_PATH, s["snapshot_id"], peer_set=peer_set)
+        if not d.empty:
+            d["fund_name"] = d["fund_name"].apply(_normalize_ft_fund_name)
+            ft_regions[s["snapshot_id"]] = d[d["category"] == "Regions"]
+
+    date_labels = [s["snapshot_date"] for s in snaps]
+    st.caption(f"Run dates: {', '.join(date_labels)} (oldest → newest). Each table names its source and portfolio date. "
+               f"Rule: valid → complete → latest as-of → factsheet, Bloomberg, FT. Alquity funds use internal holdings.")
+
+    funds = {}
+    for sel in sels:
+        for (fund, _), s in sel.items():
+            if fund in _OLD_VIEW_EXCLUDE:
+                continue
+            funds.setdefault(fund, any(c.is_alquity for c in s.candidates))
+    ordered = sorted(funds, key=lambda f: (not funds[f], f))
+
+    for fund in ordered:
+        is_alq = funds[fund]
+        hdr_bg = "#535050" if is_alq else "#6b6b6b"
+        st.markdown(
+            f'<div style="background-color:{hdr_bg};padding:10px;color:white;font-family:arial,sans-serif;'
+            f'font-size:10pt;font-weight:bold;margin-top:16px;border-radius:4px 4px 0 0;">'
+            f'{fund}{" (Alquity)" if is_alq else ""}</div>', unsafe_allow_html=True)
+        cols = st.columns(len(snaps))
+        for d_idx, s in enumerate(snaps):
+            sel = sels[d_idx]
+            prev_sel = sels[d_idx - 1] if d_idx > 0 else {}
+            with cols[d_idx]:
+                parts = [f'<div style="font-family:arial,sans-serif;font-size:10pt;font-weight:bold;margin-bottom:6px;">'
+                         f'{s["snapshot_date"]}</div>']
+                for block, style, pad in (("Top 10", "holdings", 10), ("Sectors", "sector", 0), ("Countries", "country", 0)):
+                    cur = sel.get((fund, block))
+                    prev = prev_sel.get((fund, block)) if prev_sel else None
+                    if block != "Top 10":
+                        parts.append('<div style="margin-top:8px;"></div>')
+                    if cur is None or cur.chosen is None:
+                        reason = cur.reason if cur else "no data"
+                        parts.append(_old_view_table_html([("", "", "")] * (pad or 1), block, style=style))
+                        parts.append(_caption(f"Not shown: {reason}", warn=True))
+                        continue
+                    prev_c = prev.chosen if prev else None
+                    rows = _rows_from_candidate(cur.chosen, prev_c, pad_to=pad)
+                    parts.append(_old_view_table_html(rows, block, style=style))
+                    warn = any(f.startswith(("stale_warn", "incomplete_only", "sister_vehicle", "conflict")) for f in cur.flags)
+                    note = cur.chosen.label
+                    if prev_c is not None and prev_c.source != cur.chosen.source:
+                        note += f" · source changed from {prev_c.source}, arrows paused"
+                    parts.append(_caption(note, warn=warn))
+                reg = ft_regions.get(s["snapshot_id"])
+                if reg is not None and not reg[reg["fund_name"] == fund].empty:
+                    r_rows = [(n, f"{p:.2f}%", "") for n, p in
+                              reg[reg["fund_name"] == fund].sort_values("percentage", ascending=False)[["name", "percentage"]].values]
+                    parts.append('<div style="margin-top:8px;"></div>')
+                    parts.append(_old_view_table_html(r_rows, "Regions (FT)", style="country"))
+                    parts.append(_caption("FT · Morningstar regions · as at " + str(reg[reg["fund_name"] == fund]["date_of_data"].iloc[0])))
+                st.markdown("\n".join(parts), unsafe_allow_html=True)
+        latest = sels[-1]
+        with st.expander(f"Sources considered for {fund} ({snaps[-1]['snapshot_date']})"):
+            lines = []
+            for block in ("Top 10", "Countries", "Sectors"):
+                sel = latest.get((fund, block))
+                if not sel:
+                    continue
+                lines.append(f"**{block}** → {sel.chosen.label if sel.chosen else 'nothing shown'} ({sel.reason})")
+                for c in sorted(sel.candidates, key=lambda c: (c.as_of or "", c.source), reverse=True):
+                    status = ("✓ " if c.valid else "✗ invalid: " + c.valid_reason + " ") + ("complete" if c.complete else "incomplete: " + c.complete_reason)
+                    lines.append(f"- {c.label}: {status}, {len(c.rows)} rows")
+                flagged = [f for f in sel.flags]
+                if flagged:
+                    lines.append("- flags: " + ", ".join(flagged))
+            st.markdown("\n".join(lines))
+
+
 def render_old_view_ft(peer_set: str, bbg_snap: int):
     """Top 10 tab with side-by-side date columns (last 3 months of FT data)."""
+    cfg = _load_config()
+    if peer_set in _source_peer_sets(cfg):
+        render_top10_sources(peer_set, cfg)
+        return
     ft_snaps = get_ft_snapshots(DB_PATH)
     if not ft_snaps:
         st.warning("No FT data available.")

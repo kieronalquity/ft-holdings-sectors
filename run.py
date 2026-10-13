@@ -11,7 +11,49 @@ from db import init_db, insert_scrape_results, get_comparison_data
 from report import generate_report
 from bloomberg_loader import (
     create_ft_snapshot, attach_ft_data, ingest_bloomberg_excel, import_historical_html,
+    get_latest_bloomberg_snapshot_id,
 )
+from factsheets import fetch_all_factsheets, attach_factsheet_data
+from source_select import run_summary
+
+
+def _previous_snapshot_id(db_path: str, snapshot_id: int):
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT snapshot_id FROM bbg_snapshots WHERE snapshot_id<>? AND snapshot_date <= "
+            "(SELECT snapshot_date FROM bbg_snapshots WHERE snapshot_id=?) "
+            "AND snapshot_id IN (SELECT DISTINCT snapshot_id FROM ft_snapshot_data) "
+            "ORDER BY snapshot_date DESC, snapshot_id DESC LIMIT 1", (snapshot_id, snapshot_id)).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _source_peer_sets(config: dict) -> list:
+    """Peer sets whose Top 10 tab uses source selection (config: top10_sources.peer_sets)."""
+    return list((config.get("top10_sources") or {}).get("peer_sets") or [])
+
+
+def _factsheets_and_summary(config: dict, db_path: str, sid: int, step: str) -> None:
+    """Fetch configured factsheets into snapshot `sid`, then print the source-selection summary."""
+    cfg = config.get("factsheets", []) or []
+    if cfg:
+        print(f"\n{step} Fetching {len(cfg)} manager factsheets...")
+        fs = attach_factsheet_data(db_path, sid, fetch_all_factsheets(config))
+        print(f"  stored {fs['num_rows']} factsheet rows for {len(fs['funds_ok'])} funds")
+        for fund, err in fs["funds_failed"].items():
+            print(f"  FAILED {fund}: {err}")
+    peer_sets = _source_peer_sets(config)
+    summary = run_summary(db_path, sid, peer_sets, config, _previous_snapshot_id(db_path, sid))
+    out_dir = Path(config.get("report", {}).get("output_dir", "output"))
+    out_dir.mkdir(exist_ok=True)
+    path = out_dir / f"run_summary_snapshot_{sid}.txt"
+    path.write_text(summary, encoding="utf-8")
+    # console: questions and notices only; the full per-fund source table is in the file
+    print("\n" + summary[summary.find("QUESTIONS"):])
+    print(f"\n(full source table saved to {path})")
 
 
 def load_config(config_path: str) -> dict:
@@ -42,13 +84,18 @@ def main():
     parser.add_argument("--scrape", action="store_true", help="Scrape fund data from FT")
     parser.add_argument("--report", action="store_true", help="Generate comparison HTML report")
     parser.add_argument("--ft-only", action="store_true", help="FT scrape only — update Old View in dashboard (no Bloomberg re-ingest)")
+    parser.add_argument("--factsheets", action="store_true",
+                        help="Fetch manager factsheets into the latest snapshot and print the Top 10 tab source summary "
+                             "(no Bloomberg ingest, no FT scrape)")
+    parser.add_argument("--summary", action="store_true",
+                        help="Print the Top 10 tab source-selection summary for the latest snapshot without fetching anything")
     parser.add_argument("--label", type=str, default=None, help="Override the snapshot label")
     parser.add_argument("--import-history", type=str, default=None, help="Import historical FT data from HTML file")
     parser.add_argument("--config", default="config.yaml", help="Path to config file (default: config.yaml)")
     args = parser.parse_args()
 
     # If no flags are set, do scrape + report (legacy behaviour)
-    if (not args.scrape and not args.report and not args.ft_only
+    if (not args.scrape and not args.report and not args.ft_only and not args.factsheets and not args.summary
             and not args.import_history and args.update is None):
         args.scrape = True
         args.report = True
@@ -88,7 +135,7 @@ def main():
               f"{result['num_holdings']} holdings, {result['num_master_rows']} master rows"
               + (f", errors: {result['errors']}" if result["errors"] else ""))
 
-        print(f"\n[2/2] Scraping FT for {len(config.get('funds', []))} funds...")
+        print(f"\n[2/3] Scraping FT for {len(config.get('funds', []))} funds...")
         entries = scrape_all_funds(config)
         if not entries:
             print("No data scraped from FT — snapshot has Bloomberg data only.")
@@ -96,7 +143,19 @@ def main():
             ft = attach_ft_data(db_path, sid, entries)
             print(f"  attached {ft['num_entries']} FT entries to snapshot id={sid}")
 
-        print(f"\nDone: '{label}' (snapshot id={sid}). Push to GitHub to update the live dashboard.")
+        _factsheets_and_summary(config, db_path, sid, "[3/3]")
+        print(f"\nDone: '{label}' (snapshot id={sid}). Review the QUESTIONS above, then push to GitHub to update the live dashboard.")
+        return
+
+    if args.factsheets or args.summary:
+        sid = get_latest_bloomberg_snapshot_id(db_path)
+        if not sid:
+            print("No Bloomberg snapshot found.")
+            return
+        if args.factsheets:
+            _factsheets_and_summary(config, db_path, sid, "[1/1]")
+        else:
+            print(run_summary(db_path, sid, _source_peer_sets(config), config, _previous_snapshot_id(db_path, sid)))
         return
 
     if args.scrape:
