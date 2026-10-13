@@ -11,6 +11,10 @@ scraping:
   timeout: 30
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
   max_retries: 3
+  # Also scrape the FT 'Regions' weighting table (Morningstar regions, not countries)
+  # for these peer sets. Add FW once Asia is working well.
+  regions_peer_sets:
+    - Asia
 
 funds:
   # ── India ──────────────────────────────────────────────────
@@ -51,9 +55,12 @@ funds:
   - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=GB0033874768:GBP"
     peer_set: Asia
     # Stewart Investors Asia Pacific Leaders Fund
-  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=GB00B5448K84:GBP"
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1116431138:USD"
     peer_set: Asia
-    # (scrape currently fails)
+    # Fidelity Funds - Asia Pacific Opportunities Fund Y-Acc-USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0943624824:USD"
+    peer_set: Asia
+    # JPMorgan Funds - Asia Growth Fund I (acc) USD
   - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00BD065K35:USD"
     peer_set: Asia
     # Veritas Asian Fund Fund D USD
@@ -135,3 +142,27 @@ funds:
   - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0443655294:USD"
     peer_set: FW
     # (scrape currently fails)
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU2125050307:USD"
+    peer_set: FW
+    # abrdn SICAV I - Emerging Markets SDG Equity Fund I Acc USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1846577242:USD"
+    peer_set: FW
+    # Artemis Funds (Lux) - SmartGARP Global Emerging Markets Equity I Acc USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0106252546:USD"
+    peer_set: FW
+    # Schroder ISF Emerging Markets C Acc USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1775953497:USD"
+    peer_set: FW
+    # Invesco Emerging Markets Equity Fund Z Annual Distribution USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU1244138340:USD"
+    peer_set: FW
+    # T. Rowe Price Funds SICAV - Emerging Markets Discovery Equity Fund I USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0781742183:USD"
+    peer_set: FW
+    # Polunin Funds - Developing Countries Fund C USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0611395913:USD"
+    peer_set: FW
+    # Ninety One GSF Emerging Markets Equity I Acc USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0478762148:USD"
+    peer_set: FW
+    # Robeco Emerging Markets Equities I USD
