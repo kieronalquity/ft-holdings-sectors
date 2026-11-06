@@ -12,7 +12,8 @@ from bloomberg_loader import (
     get_latest_bloomberg_snapshot_id, load_ft_snapshot_data,
     get_ft_snapshots,
 )
-from source_select import select_all
+from source_select import select_all, _ft_names_by_isin
+from peer_groups import load_groups, resolve, group_comparison
 from peer_analytics import (
     enrich_holdings, holdings_overlap, conviction_positions,
     unique_positions, consensus_holdings, country_allocation,
@@ -91,6 +92,14 @@ def main():
         # Peer set selector (first)
         peer_set = st.selectbox("Peer Set", list(PEER_SET_LABELS.keys()), format_func=lambda k: PEER_SET_LABELS[k])
 
+        # Peer groups (config: peer_groups): named subsets of the peer set that pre-fill Filter Peers
+        groups = load_groups(_load_config(), peer_set)
+        sel_groups = []
+        if groups:
+            picked = st.pills("Peer Group", list(groups), selection_mode="multi", key=f"peer_group_{peer_set}",
+                              help="Pick one or more groups to narrow the peer set. None selected = all peers.") or []
+            sel_groups = [g for g in groups if g in picked]
+
         # Reserve a visual slot for Filter Peers (rendered above Snapshot)
         peers_container = st.container()
 
@@ -109,9 +118,15 @@ def main():
 
         # Load peer list and render the filter in the reserved slot above
         peers_info = get_peer_funds(DB_PATH, bbg_snap, peer_set)
-        all_peer_names = peers_info[peers_info["is_alquity"] == 0]["fund_name"].tolist()
+        peer_rows = peers_info[peers_info["is_alquity"] == 0]
+        all_peer_names = peer_rows["fund_name"].tolist()
+        fund_group, group_missing = resolve(
+            groups, {**dict(zip(peer_rows["fund_isin"], peer_rows["fund_name"])), **{n: n for n in all_peer_names}})
+        default_peers = [n for n in all_peer_names if fund_group.get(n) in sel_groups] if sel_groups else all_peer_names
         with peers_container:
-            selected_peers = st.multiselect("Filter Peers", all_peer_names, default=all_peer_names)
+            # keyed on the group selection so picking a group resets the filter to that group's funds
+            selected_peers = st.multiselect("Filter Peers", all_peer_names, default=default_peers,
+                                            key=f"filter_peers_{peer_set}_{bbg_snap}_{'|'.join(sel_groups)}")
 
         st.divider()
         if selected_snap_type == "ft_only":
@@ -123,15 +138,32 @@ def main():
     # ── Load & enrich ────────────────────────────────────────────
     holdings = load_holdings(DB_PATH, bbg_snap, peer_set, exclude_cash=True, min_weight=0.0)
     master = load_master_data(DB_PATH, bbg_snap)
-    df = enrich_holdings(holdings, master)
+    df_all = enrich_holdings(holdings, master)
 
     # Apply peer filter
     alq_name = peers_info[peers_info["is_alquity"] == 1]["fund_name"].iloc[0]
-    df = df[(df["fund_name"] == alq_name) | (df["fund_name"].isin(selected_peers))]
+    df = df_all[(df_all["fund_name"] == alq_name) | (df_all["fund_name"].isin(selected_peers))]
 
     if df.empty:
         st.warning("No holdings data for this selection.")
         return
+
+    # Say which peers the numbers below are measured against, so a narrowed view is never mistaken for the full set
+    if groups:
+        n_all = df_all[df_all["is_alquity"] == 0]["fund_name"].nunique()
+        n_sel = df[df["is_alquity"] == 0]["fund_name"].nunique()
+        if set(selected_peers) != set(default_peers):
+            label = "Custom selection"
+        else:
+            label = " + ".join(sel_groups) if sel_groups else "All peers"
+        st.markdown(f"Compared against: **{label}** · {n_sel} of {n_all} peers with holdings")
+        absent = [f"{lbl} ({g})" for g in sel_groups for lbl in group_missing.get(g, [])]
+        if absent:
+            st.caption("No Bloomberg holdings in this snapshot for: " + ", ".join(absent)
+                       + ". These funds can only appear on the Top 10 tab.")
+        if sel_groups and n_sel == 0:
+            st.warning("No peer holdings for this group in this snapshot.")
+            return
 
     # ── Tabs ─────────────────────────────────────────────────────
     # Date the FT Top 10 was last refreshed: the selected snapshot's own FT data
@@ -149,7 +181,7 @@ def main():
     ])
 
     with tabs[0]:
-        render_overview(df, peers_info, selected_peers, alq_name, top10_date)
+        render_overview(df, peers_info, selected_peers, alq_name, top10_date, df_all, groups, fund_group)
     with tabs[1]:
         render_conviction(df)
     with tabs[2]:
@@ -171,7 +203,7 @@ def main():
     with tabs[10]:
         # Always show FT Top 10 view if FT snapshots exist
         if ft_snaps:
-            render_old_view_ft(peer_set, bbg_snap)
+            render_old_view_ft(peer_set, bbg_snap, groups, sel_groups)
         else:
             render_old_view(df, alq_name)
 
@@ -180,8 +212,9 @@ def main():
 # Tab renderers
 # =====================================================================
 
-def render_overview(df, peers_info, selected_peers, alq_name, top10_date=""):
+def render_overview(df, peers_info, selected_peers, alq_name, top10_date="", df_all=None, groups=None, fund_group=None):
     """Tab 1: Overview with key metrics and peer summary."""
+    fund_group = fund_group or {}
     ashr = active_share(df)
     conc = concentration_metrics(df)
     uniq = unique_positions(df)
@@ -205,6 +238,7 @@ def render_overview(df, peers_info, selected_peers, alq_name, top10_date=""):
         fund = row["fund_name"]
         summary_rows.append({
             "Fund": fund + tag,
+            **({"Group": fund_group.get(fund, "")} if groups else {}),
             "BBG Portfolio Date": date_lookup.get(fund, ""),
             "Top 10 Refresh Date": top10_date,
             "Positions": int(row["num_positions"]),
@@ -214,6 +248,12 @@ def render_overview(df, peers_info, selected_peers, alq_name, top10_date=""):
             "Max %": round(row["max_position_weight"], 2),
         })
     show_df(pd.DataFrame(summary_rows))
+
+    if groups and df_all is not None:
+        st.subheader("Alquity vs Each Peer Group")
+        st.caption("Every group side by side, whatever the sidebar selection. Overlap and active share are "
+                   "Alquity measured against that group's funds only; top country and sector are the group average.")
+        show_df(group_comparison(df_all, groups, fund_group))
 
     # Coverage
     cov = sa_data["coverage"]
@@ -820,7 +860,34 @@ def _caption(text: str, warn: bool = False) -> str:
     return f'<div style="font-family:arial,sans-serif;font-size:8pt;color:{color};margin:2px 0 4px 0;">{text}</div>'
 
 
-def render_top10_sources(peer_set: str, cfg: dict):
+def _top10_groups(funds: dict, groups: dict, sel_groups: list) -> tuple:
+    """Apply the sidebar Peer Group selection to the Top 10 tab, whose funds carry FT names.
+
+    funds: {fund_name: is_alquity}. Returns (funds to show, {fund: group}); Alquity funds always stay.
+    Writes a caption naming the group and any of its funds the tab has no data for."""
+    if not groups:
+        return list(funds), {}
+    keys = {isin: name for isin, name in
+            ((i, _normalize_ft_fund_name(n)) for i, n in _ft_names_by_isin(DB_PATH).items()) if name in funds}
+    keys.update({f: f for f in funds})
+    fund_group, missing = resolve(groups, keys)
+    if not sel_groups:
+        return list(funds), fund_group
+    shown = [f for f in funds if funds[f] or fund_group.get(f) in sel_groups]
+    note = (f"Peer group: **{' + '.join(sel_groups)}** · {sum(1 for f in shown if not funds[f])} peer funds. "
+            "This tab follows the Peer Group selection, not Filter Peers.")
+    absent = [lbl for g in sel_groups for lbl in missing.get(g, [])]
+    if absent:
+        note += " No data yet for: " + ", ".join(absent) + "."
+    st.caption(note)
+    return shown, fund_group
+
+
+def _group_tag(fund: str, fund_group: dict) -> str:
+    return f" · {fund_group[fund]}" if fund in fund_group else ""
+
+
+def render_top10_sources(peer_set: str, cfg: dict, groups=None, sel_groups=None):
     """Top 10 tab driven by source selection (factsheet / Bloomberg / FT), see source_select.py.
     Same side-by-side date layout as the FT view, with the chosen source and as-of date under
     each table and the full candidate list in an expander."""
@@ -853,6 +920,7 @@ def render_top10_sources(peer_set: str, cfg: dict):
                 continue
             funds.setdefault(fund, any(c.is_alquity for c in s.candidates))
     ordered = sorted(funds, key=lambda f: (not funds[f], f))
+    ordered, fund_group = _top10_groups({f: funds[f] for f in ordered}, groups, sel_groups)
 
     for fund in ordered:
         is_alq = funds[fund]
@@ -860,7 +928,7 @@ def render_top10_sources(peer_set: str, cfg: dict):
         st.markdown(
             f'<div style="background-color:{hdr_bg};padding:10px;color:white;font-family:arial,sans-serif;'
             f'font-size:10pt;font-weight:bold;margin-top:16px;border-radius:4px 4px 0 0;">'
-            f'{fund}{" (Alquity)" if is_alq else ""}</div>', unsafe_allow_html=True)
+            f'{fund}{" (Alquity)" if is_alq else ""}{_group_tag(fund, fund_group)}</div>', unsafe_allow_html=True)
         cols = st.columns(len(snaps))
         for d_idx, s in enumerate(snaps):
             sel = sels[d_idx]
@@ -911,11 +979,11 @@ def render_top10_sources(peer_set: str, cfg: dict):
             st.markdown("\n".join(lines))
 
 
-def render_old_view_ft(peer_set: str, bbg_snap: int):
+def render_old_view_ft(peer_set: str, bbg_snap: int, groups=None, sel_groups=None):
     """Top 10 tab with side-by-side date columns (last 3 months of FT data)."""
     cfg = _load_config()
     if peer_set in _source_peer_sets(cfg):
-        render_top10_sources(peer_set, cfg)
+        render_top10_sources(peer_set, cfg, groups, sel_groups)
         return
     ft_snaps = get_ft_snapshots(DB_PATH)
     if not ft_snaps:
@@ -955,7 +1023,7 @@ def render_old_view_ft(peer_set: str, bbg_snap: int):
 
     alq_funds = sorted([f for f, a in all_funds.items() if a == 1])
     peer_funds = sorted([f for f, a in all_funds.items() if a == 0])
-    funds = alq_funds + peer_funds
+    funds, fund_group = _top10_groups({f: all_funds[f] == 1 for f in alq_funds + peer_funds}, groups, sel_groups)
 
     for fund_name in funds:
         is_alq = all_funds[fund_name] == 1
@@ -966,7 +1034,7 @@ def render_old_view_ft(peer_set: str, bbg_snap: int):
             f'<div style="background-color:{hdr_bg};padding:10px;color:white;'
             f'font-family:arial,sans-serif;font-size:10pt;font-weight:bold;'
             f'margin-top:16px;border-radius:4px 4px 0 0;">'
-            f'{fund_name}{tag}</div>',
+            f'{fund_name}{tag}{_group_tag(fund_name, fund_group)}</div>',
             unsafe_allow_html=True,
         )
 

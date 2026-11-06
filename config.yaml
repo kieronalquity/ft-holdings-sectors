@@ -166,6 +166,56 @@ funds:
   - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0478762148:USD"
     peer_set: FW
     # Robeco Emerging Markets Equities I USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE00B52QBB85:USD"
+    peer_set: FW
+    # Comgest Growth Emerging Markets USD I Acc (FT top 10 only, no Bloomberg holdings)
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=IE0008FT1RX8:USD"
+    peer_set: FW
+    # Cusana Emerging Markets Equities Fund S USD
+  - url: "https://markets.ft.com/data/funds/tearsheet/holdings?s=LU0612811850:USD"
+    peer_set: FW
+    # William Blair SICAV - Emerging Markets Leaders Fund Class I USD Acc
+
+# ── Peer groups: named subsets of a peer set, picked in the dashboard sidebar (see peer_groups.py) ──
+# peer set -> group -> fund label: ISIN. Give a list of ISINs / exact fund names where Bloomberg
+# and FT track different share classes. Source: 'vs Peers' sheet of the Monthly Performance Review.
+peer_groups:
+  FW:
+    True ESG:
+      abrdn Emerging Markets SDG Equity: LU2125050307
+      CT (Lux) Responsible Global Emerging Markets Equity: LU1805264477
+      JPM Emerging Markets Sustainable Equity: LU2051469208
+      UBAM Positive Impact Emerging Equity: LU2051760473
+    Quality growth:
+      Aikya Global Emerging Markets: IE00BMC5GD19
+      Comgest Growth Emerging Markets: IE00B52QBB85
+      Cusana Emerging Markets Equities: IE0008FT1RX8
+      Stewart Investors Global Emerging Markets All Cap: GB00B64TS998
+      William Blair Emerging Markets Leaders: LU0612811850
+    Sustainable:
+      Ashmore Emerging Markets Equity ESG: [LU2095309378, LU2095310384]   # Bloomberg I USD / FT Inst III USD
+      Driehaus Emerging Markets Equity: IE00B6RSJ564
+      East Capital Global Emerging Markets Sustainable: LU0383826160
+      Candriam Sustainable Equity Emerging Markets: [LU1434524259, LU1434524093]   # Bloomberg I EUR / FT C EUR
+      Fidelity Emerging Markets Equity ESG: LU1102506067
+      # FT lists Matthews under the symbol MISFX (no ISIN), so it is matched by FT name
+      Matthews Emerging Markets Sustainable Future: [US5771307197, "Matthews Emerging Markets Sustainable Future Fund Institutional Class"]
+      Nordea Emerging Sustainable Stars Equity: LU0602539354
+      Vontobel mtx Emerging Markets Leaders: LU0571085686
+      # no Top 10 source yet (FT serves sectors only for LU1984219524, no Bloomberg holdings);
+      # listed with no ISIN so the group still counts it. Add the ISIN and a funds: entry once sourced.
+      DWS Invest ESG Global Emerging Markets Equities: []
+    Best in class:
+      Artemis SmartGARP Global Emerging Markets Equity: LU1846577242
+      Schroder ISF Emerging Markets: LU0106252546
+      Invesco Emerging Markets Equity: LU1775953497
+      T. Rowe Price Emerging Markets Discovery Equity: LU1244138340
+      Polunin Developing Countries: LU0781742183
+      Ninety One GSF Emerging Markets Equity: LU0611395913
+      Robeco Emerging Markets Equities: LU0478762148
+      # Principal GI Origin Global Emerging Markets left out: marked "Liquidated - 31/07/2026" in the
+      # Monthly Performance Review ('vs Peers stats'). Not the same fund as Jupiter Origin Global
+      # Emerging Markets (IRL), IE00B41L7861, which is the renamed Jupiter Global EM Focus fund.
 
 # ── Manager factsheets (Top 10 tab source selection; see source_select.py) ──
 # 'fund' must equal the FT fund name as scraped. vehicle: same_class | same_fund | sister
