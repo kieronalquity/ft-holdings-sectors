@@ -257,7 +257,10 @@ factsheets:
 # ── Top 10 tab source rules: decisions already taken so the run stops asking ──
 # fund = FT fund name; block optional (Top 10 | Countries | Sectors). Keys: accept_incomplete,
 # allow_sister, accept_stale. Add an entry here when you answer a QUESTION from run.py.
-source_rules: []
+source_rules:
+  - fund: "Stewart Investors Asia Pacific Leaders Fund Class B (Accumulation) GBP"
+    block: Top 10
+    allow_sister: true
 
 # ── Peer sets whose Top 10 tab is driven by source selection (factsheet / Bloomberg / FT) ──
 # Other peer sets keep the plain FT view. Add FW / India once their factsheets are configured.
